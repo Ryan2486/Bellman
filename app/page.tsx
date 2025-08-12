@@ -563,14 +563,16 @@ export default function BellmanFordVisualizer() {
 
   // Réinitialiser
   const reset = () => {
-    setNodes(
-      nodes.map((node) => ({
-        ...node,
-        distance: node.isStart ? 0 : Number.POSITIVE_INFINITY,
-        previous: null,
-      })),
-    )
-    setEdges(edges.map((edge) => ({ ...edge, isActive: false, isHovered: false })))
+    // Clear all nodes and edges
+    setNodes([])
+    setEdges([])
+
+    // Reset all state variables
+    setSelectedNode(null)
+    setSelectedEdge(null)
+    setConnectingFrom(null)
+    setStartNode(null)
+    setEndNode(null)
     setIsRunning(false)
     setCurrentStep(0)
     setAlgorithmSteps([])
@@ -578,6 +580,13 @@ export default function BellmanFordVisualizer() {
     setOptimalDistance(null)
     setHasNegativeCycle(false)
     setAlgorithmCompleted(false)
+    setMode("add")
+    setEdgeWeight("1")
+
+    // Close any open dialogs
+    setShowEditDialog(false)
+    setEditingEdge(null)
+    setNewWeight("")
   }
 
   // Vérifier si on peut lancer l'algorithme

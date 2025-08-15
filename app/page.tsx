@@ -59,11 +59,11 @@ export default function BellmanFordVisualizer() {
   const [currentStep, setCurrentStep] = useState(0)
   const [algorithmSteps, setAlgorithmSteps] = useState<AlgorithmStep[]>([])
   const [mode, setMode] = useState<"add" | "connect" | "select" | "delete-edge" | "edit-edge">("add")
-  const [optimizationMode, setOptimizationMode] = useState<"min" | "max">("min") // New: min/max mode
+  const [optimizationMode, setOptimizationMode] = useState<"min" | "max">("min")
   const [startNode, setStartNode] = useState<string | null>(null)
   const [endNode, setEndNode] = useState<string | null>(null)
   const [optimalPath, setOptimalPath] = useState<string[]>([])
-  const [allOptimalPaths, setAllOptimalPaths] = useState<string[][]>([]) // New: track all shortest paths
+  const [allOptimalPaths, setAllOptimalPaths] = useState<string[][]>([])
   const [optimalDistance, setOptimalDistance] = useState<number | null>(null)
   const [hasNegativeCycle, setHasNegativeCycle] = useState(false)
   const [algorithmCompleted, setAlgorithmCompleted] = useState(false)
@@ -71,15 +71,107 @@ export default function BellmanFordVisualizer() {
   const [editingEdge, setEditingEdge] = useState<Edge | null>(null)
   const [newWeight, setNewWeight] = useState<string>("")
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
+  const [isLoaded, setIsLoaded] = useState(false)
 
   const CANVAS_WIDTH = 800
   const CANVAS_HEIGHT = 500
   const NODE_RADIUS = 25
+  const STORAGE_KEY = "bellman-ford-session"
 
-  // Générer un ID unique pour les arêtes
+  // Interface for session data
+  interface SessionData {
+    nodes: Node[]
+    edges: Edge[]
+    startNode: string | null
+    endNode: string | null
+    optimizationMode: "min" | "max"
+    edgeWeight: string
+    mode: "add" | "connect" | "select" | "delete-edge" | "edit-edge"
+    timestamp: number
+  }
+
+  // Save session to localStorage
+  const saveSession = useCallback(() => {
+    if (!isLoaded) return
+
+    try {
+      const sessionData: SessionData = {
+        nodes,
+        edges,
+        startNode,
+        endNode,
+        optimizationMode,
+        edgeWeight,
+        mode,
+        timestamp: Date.now()
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionData))
+    } catch (error) {
+      console.warn("Error saving session:", error)
+    }
+  }, [nodes, edges, startNode, endNode, optimizationMode, edgeWeight, mode, isLoaded])
+
+  // Load session from localStorage
+  const loadSession = useCallback(() => {
+    try {
+      const savedData = localStorage.getItem(STORAGE_KEY)
+      if (savedData) {
+        const sessionData: SessionData = JSON.parse(savedData)
+
+        // Check if the data is too old (optional, here 7 days)
+        const daysSinceLastSave = (Date.now() - sessionData.timestamp) / (1000 * 60 * 60 * 24)
+        if (daysSinceLastSave > 7) {
+          localStorage.removeItem(STORAGE_KEY)
+          return false
+        }
+
+        // Restore state
+        setNodes(sessionData.nodes || [])
+        setEdges(sessionData.edges || [])
+        setStartNode(sessionData.startNode || null)
+        setEndNode(sessionData.endNode || null)
+        setOptimizationMode(sessionData.optimizationMode || "min")
+        setEdgeWeight(sessionData.edgeWeight || "1")
+        setMode(sessionData.mode || "add")
+
+        return true
+      }
+    } catch (error) {
+      console.warn("Error loading session:", error)
+      localStorage.removeItem(STORAGE_KEY)
+    }
+    return false
+  }, [])
+
+  // Load session on startup
+  useEffect(() => {
+    const hasLoadedData = loadSession()
+    setIsLoaded(true)
+
+    if (hasLoadedData) {
+      console.log("Session restored from localStorage")
+    }
+  }, [loadSession])
+
+  // Auto-save when state changes
+  useEffect(() => {
+    saveSession()
+  }, [saveSession])
+
+  // Clean up session on beforeunload (optional)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveSession()
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [saveSession])
+
+  // Generate a unique ID for edges
   const generateEdgeId = (from: string, to: string) => `${from}-${to}`
 
-  // Trouver l'arête la plus proche du curseur
+  // Find the edge closest to the cursor
   const findNearestEdge = (x: number, y: number): Edge | null => {
     let nearestEdge: Edge | null = null
     let minDistance = Number.POSITIVE_INFINITY
@@ -89,7 +181,7 @@ export default function BellmanFordVisualizer() {
       const toNode = nodes.find((n) => n.id === edge.to)
 
       if (fromNode && toNode) {
-        // Calculer la distance du point à la ligne
+        // Calculate the distance from the point to the line
         const A = x - fromNode.x
         const B = y - fromNode.y
         const C = toNode.x - fromNode.x
@@ -127,7 +219,7 @@ export default function BellmanFordVisualizer() {
     return nearestEdge
   }
 
-  // Dessiner le graphe
+  // Draw the graph
   const drawGraph = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -135,18 +227,17 @@ export default function BellmanFordVisualizer() {
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
-    // Effacer le canvas
     ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
 
-    // Get all nodes that are part of optimal paths
     const nodesInOptimalPaths = new Set<string>()
+    // Get all nodes that are part of optimal paths
     if (algorithmCompleted && allOptimalPaths.length > 0) {
       allOptimalPaths.forEach(path => {
         path.forEach(nodeId => nodesInOptimalPaths.add(nodeId))
       })
     }
 
-    // Dessiner les arêtes
+    // Draw edges
     edges.forEach((edge) => {
       const fromNode = nodes.find((n) => n.id === edge.from)
       const toNode = nodes.find((n) => n.id === edge.to)
@@ -166,9 +257,9 @@ export default function BellmanFordVisualizer() {
             )
           )
 
-        // Styles selon l'état
+        // Styles according to state
         if (isInOptimalPath) {
-          ctx.strokeStyle = "#10b981" // Vert émeraude pour les arêtes optimales
+          ctx.strokeStyle = "#10b981" // Emerald green for optimal edges
           ctx.lineWidth = 5
           ctx.shadowColor = "#10b981"
           ctx.shadowBlur = 8
@@ -186,7 +277,7 @@ export default function BellmanFordVisualizer() {
         ctx.stroke()
         ctx.shadowBlur = 0 // Reset shadow
 
-        // Flèche
+        // Arrow
         const angle = Math.atan2(toNode.y - fromNode.y, toNode.x - fromNode.x)
         const arrowLength = 15
         const arrowX = toNode.x - Math.cos(angle) * (NODE_RADIUS + 5)
@@ -205,14 +296,14 @@ export default function BellmanFordVisualizer() {
         )
         ctx.stroke()
 
-        // Poids de l'arête avec style amélioré
+        // Edge weight with enhanced style
         const midX = (fromNode.x + toNode.x) / 2
         const midY = (fromNode.y + toNode.y) / 2
 
-        // Fond du poids
+        // Background of the weight
         if (isInOptimalPath) {
-          ctx.fillStyle = "#dcfce7" // Fond vert clair
-          ctx.strokeStyle = "#10b981" // Bordure verte
+          ctx.fillStyle = "#dcfce7" // Light green background
+          ctx.strokeStyle = "#10b981" // Green border
           ctx.lineWidth = 3
         } else if (edge.isHovered || selectedEdge === edge.id) {
           ctx.fillStyle = "#fef3c7"
@@ -225,22 +316,22 @@ export default function BellmanFordVisualizer() {
         ctx.fillRect(midX - 20, midY - 14, 40, 28)
         ctx.strokeRect(midX - 20, midY - 14, 40, 28)
 
-        // Texte du poids
-        ctx.fillStyle = isInOptimalPath ? "#065f46" : "#374151" // Texte vert foncé si optimal
+        // Weight text
+        ctx.fillStyle = isInOptimalPath ? "#065f46" : "#374151" // Dark green text if optimal
         ctx.font = isInOptimalPath ? "bold 14px Arial" : "bold 12px Arial"
         ctx.textAlign = "center"
-        ctx.fillText(edge.weight.toString(), midX, midY + 4)
+        ctx.fillText((edge.weight || 0).toString(), midX, midY + 4)
       }
     })
 
-    // Dessiner les nœuds
+    // Draw nodes
     nodes.forEach((node) => {
       const isInOptimalPath = nodesInOptimalPaths.has(node.id)
 
       ctx.beginPath()
       ctx.arc(node.x, node.y, NODE_RADIUS, 0, 2 * Math.PI)
 
-      // Couleur du nœud avec dégradé
+      // Node color with gradient
       if (node.isStart) {
         const gradient = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, NODE_RADIUS)
         gradient.addColorStop(0, "#34d399")
@@ -257,10 +348,10 @@ export default function BellmanFordVisualizer() {
         gradient.addColorStop(1, "#3b82f6")
         ctx.fillStyle = gradient
       } else if (isInOptimalPath) {
-        // Nœuds dans les chemins optimaux - couleur dorée/orange
+        // Nodes in optimal paths - golden/orange color
         const gradient = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, NODE_RADIUS)
-        gradient.addColorStop(0, "#fbbf24") // Jaune/or clair
-        gradient.addColorStop(1, "#d97706") // Orange foncé
+        gradient.addColorStop(0, "#fbbf24") // Light yellow/orange
+        gradient.addColorStop(1, "#d97706") // Dark orange
         ctx.fillStyle = gradient
       } else {
         const gradient = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, NODE_RADIUS)
@@ -271,9 +362,9 @@ export default function BellmanFordVisualizer() {
 
       ctx.fill()
 
-      // Bordure spéciale pour les nœuds optimaux
+      // Special border for optimal nodes
       if (isInOptimalPath && !node.isStart && !node.isEnd) {
-        ctx.strokeStyle = "#92400e" // Bordure orange foncé
+        ctx.strokeStyle = "#92400e" // Dark orange border
         ctx.lineWidth = 3
         ctx.shadowColor = "#d97706"
         ctx.shadowBlur = 6
@@ -285,7 +376,7 @@ export default function BellmanFordVisualizer() {
       ctx.stroke()
       ctx.shadowBlur = 0 // Reset shadow
 
-      // ID du nœud
+      // Node ID
       ctx.fillStyle = isInOptimalPath && !node.isStart && !node.isEnd ? "#92400e" : "#374151"
       ctx.font = isInOptimalPath ? "bold 18px Arial" : "bold 16px Arial"
       ctx.textAlign = "center"
@@ -295,10 +386,10 @@ export default function BellmanFordVisualizer() {
       if (node.distance !== Number.POSITIVE_INFINITY) {
         ctx.font = isInOptimalPath ? "bold 14px Arial" : "12px Arial"
         ctx.fillStyle = isInOptimalPath ? "#92400e" : "#6b7280"
-        ctx.fillText(node.distance === Number.POSITIVE_INFINITY ? "∞" : node.distance.toString(), node.x, node.y + 14)
+        ctx.fillText(node.distance === Number.POSITIVE_INFINITY ? "∞" : (node.distance || 0).toString(), node.x, node.y + 14)
       }
 
-      // Icônes pour début et fin
+      // Icons for start and end
       if (node.isStart) {
         ctx.font = "16px Arial"
         ctx.fillText("🚀", node.x + NODE_RADIUS - 5, node.y - NODE_RADIUS + 10)
@@ -308,14 +399,14 @@ export default function BellmanFordVisualizer() {
         ctx.fillText("🎯", node.x + NODE_RADIUS - 5, node.y - NODE_RADIUS + 10)
       }
 
-      // Indicateur spécial pour les nœuds optimaux (étoile)
+      // Special indicator for optimal nodes (star)
       if (isInOptimalPath && !node.isStart && !node.isEnd) {
         ctx.font = "12px Arial"
         ctx.fillText("⭐", node.x + NODE_RADIUS - 8, node.y - NODE_RADIUS + 12)
       }
     })
 
-    // Ligne de connexion en cours
+    // Current connection line
     if (connectingFrom && mode === "connect") {
       const fromNode = nodes.find((n) => n.id === connectingFrom)
       if (fromNode) {
@@ -331,7 +422,7 @@ export default function BellmanFordVisualizer() {
     }
   }, [nodes, edges, selectedNode, selectedEdge, allOptimalPaths, algorithmCompleted, connectingFrom, mode, mousePos])
 
-  // Gestion du mouvement de la souris
+  // Mouse move handler
   const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -342,7 +433,7 @@ export default function BellmanFordVisualizer() {
 
     setMousePos({ x, y })
 
-    // Mettre en évidence les arêtes survolées
+    // Highlight edges on hover
     if (mode === "delete-edge" || mode === "edit-edge") {
       const nearestEdge = findNearestEdge(x, y)
       setEdges((prevEdges) =>
@@ -356,7 +447,7 @@ export default function BellmanFordVisualizer() {
     }
   }
 
-  // Gestion des clics sur le canvas
+  // Click handler on canvas
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -365,17 +456,17 @@ export default function BellmanFordVisualizer() {
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
 
-    // Vérifier si on clique sur un nœud existant
+    // Check if clicking on an existing node
     const clickedNode = nodes.find((node) => {
       const distance = Math.sqrt((x - node.x) ** 2 + (y - node.y) ** 2)
       return distance <= NODE_RADIUS
     })
 
-    // Vérifier si on clique sur une arête
+    // Check if clicking on an edge
     const clickedEdge = findNearestEdge(x, y)
 
     if (mode === "add" && !clickedNode && !clickedEdge) {
-      // Ajouter un nouveau nœud
+      // Add a new node
       const newId = String.fromCharCode(65 + nodes.length)
       const newNode: Node = {
         id: newId,
@@ -392,7 +483,7 @@ export default function BellmanFordVisualizer() {
       if (!connectingFrom) {
         setConnectingFrom(clickedNode.id)
       } else if (connectingFrom !== clickedNode.id) {
-        // Vérifier si la connexion existe déjà
+        // Check if the connection already exists
         const existingEdge = edges.find((edge) => edge.from === connectingFrom && edge.to === clickedNode.id)
         if (!existingEdge) {
           const weight = Number.parseInt(edgeWeight) || 1
@@ -416,7 +507,7 @@ export default function BellmanFordVisualizer() {
       setSelectedEdge(null)
     } else if (mode === "edit-edge" && clickedEdge) {
       setEditingEdge(clickedEdge)
-      setNewWeight(clickedEdge.weight.toString())
+      setNewWeight((clickedEdge.weight || 0).toString())
       setShowEditDialog(true)
     } else if (mode === "select" && clickedEdge) {
       setSelectedEdge(clickedEdge.id)
@@ -424,7 +515,7 @@ export default function BellmanFordVisualizer() {
     }
   }
 
-  // Sauvegarder les modifications d'arête
+  // Save edge weight edit
   const saveEdgeEdit = () => {
     if (!editingEdge) return
 
@@ -478,18 +569,18 @@ export default function BellmanFordVisualizer() {
     const nodeDistances: { [key: string]: number } = {}
     const nodePredecessors: { [key: string]: string[] } = {}
 
-    // Initialisation selon le mode (MIN/MAX)
+    // Initialization based on mode (MIN/MAX)
     nodes.forEach((node) => {
       if (optimizationMode === "min") {
         nodeDistances[node.id] = node.id === startNode ? 0 : Number.POSITIVE_INFINITY
       } else {
-        // Mode MAX: on commence avec -∞ et le nœud de départ à 0
+        // MAX mode: start with -∞ and source node at 0
         nodeDistances[node.id] = node.id === startNode ? 0 : Number.NEGATIVE_INFINITY
       }
       nodePredecessors[node.id] = []
     })
 
-    // Relaxation des arêtes (V-1 fois)
+    // Relaxation of edges (V-1 times)
     for (let i = 0; i < nodes.length - 1; i++) {
       let updated = false
 
@@ -498,7 +589,7 @@ export default function BellmanFordVisualizer() {
         const toDistance = nodeDistances[edge.to]
         const newDistance = fromDistance + edge.weight
 
-        // Condition selon le mode d'optimisation
+        // Condition based on optimization mode
         const shouldUpdate = optimizationMode === "min"
           ? (fromDistance !== Number.POSITIVE_INFINITY && newDistance < toDistance)
           : (fromDistance !== Number.NEGATIVE_INFINITY && newDistance > toDistance)
@@ -538,10 +629,10 @@ export default function BellmanFordVisualizer() {
       if (!updated) break
     }
 
-    // Vérification des cycles selon le mode
+    // Cycle detection based on mode
     let hasCycle = false
     if (optimizationMode === "min") {
-      // Détection de cycles négatifs (mode MIN)
+      // Negative cycle detection (MIN mode)
       edges.forEach((edge) => {
         const fromDistance = nodeDistances[edge.from]
         const toDistance = nodeDistances[edge.to]
@@ -559,7 +650,7 @@ export default function BellmanFordVisualizer() {
         }
       })
     } else {
-      // Détection de cycles positifs (mode MAX)
+      // Positive cycle detection (MAX mode)
       edges.forEach((edge) => {
         const fromDistance = nodeDistances[edge.from]
         const toDistance = nodeDistances[edge.to]
@@ -611,7 +702,7 @@ export default function BellmanFordVisualizer() {
     }
   }
 
-  // Animation de l'algorithme (même code qu'avant)
+  // Algorithm animation (same code as before)
   useEffect(() => {
     if (isRunning && currentStep < algorithmSteps.length) {
       const timer = setTimeout(() => {
@@ -633,7 +724,7 @@ export default function BellmanFordVisualizer() {
         setEdges((prevEdges) =>
           prevEdges.map((edge) => ({
             ...edge,
-            isActive: step.previous && edge.from === step.previous && edge.to === step.updatedNode,
+            isActive: Boolean(step.previous && edge.from === step.previous && edge.to === step.updatedNode),
           })),
         )
 
@@ -648,12 +739,12 @@ export default function BellmanFordVisualizer() {
     }
   }, [isRunning, currentStep, algorithmSteps])
 
-  // Redessiner le graphe quand les données changent
+  // Redraw the graph when data changes
   useEffect(() => {
     drawGraph()
   }, [drawGraph])
 
-  // Définir le nœud de départ
+  // Set the start node
   const setAsStart = () => {
     if (!selectedNode) return
     setNodes(
@@ -667,7 +758,7 @@ export default function BellmanFordVisualizer() {
     setStartNode(selectedNode)
   }
 
-  // Définir le nœud de fin
+  // Set the end node
   const setAsEnd = () => {
     if (!selectedNode) return
     setNodes(
@@ -679,7 +770,7 @@ export default function BellmanFordVisualizer() {
     setEndNode(selectedNode)
   }
 
-  // Supprimer un nœud
+  // Delete a node
   const deleteNode = () => {
     if (!selectedNode) return
     setNodes(nodes.filter((node) => node.id !== selectedNode))
@@ -687,13 +778,10 @@ export default function BellmanFordVisualizer() {
     setSelectedNode(null)
   }
 
-  // Réinitialiser
+  // Reset function
   const reset = () => {
-    // Clear all nodes and edges
     setNodes([])
     setEdges([])
-
-    // Reset all state variables
     setSelectedNode(null)
     setSelectedEdge(null)
     setConnectingFrom(null)
@@ -703,20 +791,26 @@ export default function BellmanFordVisualizer() {
     setCurrentStep(0)
     setAlgorithmSteps([])
     setOptimalPath([])
-    setAllOptimalPaths([]) // Clear all optimal paths
+    setAllOptimalPaths([])
     setOptimalDistance(null)
     setHasNegativeCycle(false)
     setAlgorithmCompleted(false)
     setMode("add")
     setEdgeWeight("1")
-
-    // Close any open dialogs
     setShowEditDialog(false)
     setEditingEdge(null)
     setNewWeight("")
+
+    // Clear session from localStorage
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+      console.log("Session cleared from localStorage")
+    } catch (error) {
+      console.warn("Error clearing session:", error)
+    }
   }
 
-  // Vérifier si on peut lancer l'algorithme
+  // Check if the algorithm can be run
   const canRunAlgorithm = startNode && endNode && nodes.length > 0
 
   return (
@@ -954,7 +1048,7 @@ export default function BellmanFordVisualizer() {
                   <div className="space-y-2 max-h-40 overflow-y-auto">
                     {algorithmSteps.slice(0, currentStep).map((step, index) => (
                       <div key={index} className="text-sm p-2 bg-gray-50 rounded">
-                        <div className="font-medium">Itération {step.iteration}</div>
+                        <div className="font-medium">Étape {index + 1}</div>
                         <div className="text-gray-600">{step.description}</div>
                       </div>
                     ))}
@@ -989,103 +1083,163 @@ export default function BellmanFordVisualizer() {
               </CardContent>
             </Card>
 
-            {/* Tableau des distances */}
-            {nodes.length > 0 && (
-              <Card className="mt-4">
-                <CardHeader>
-                  <CardTitle>Distances depuis le nœud de départ</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-4 gap-4">
-                    {nodes.map((node) => (
-                      <div key={node.id} className="text-center p-2 border rounded">
-                        <div className="font-bold">{node.id}</div>
-                        <div className="text-sm text-gray-600">
-                          {node.distance === Number.POSITIVE_INFINITY ? "∞" : node.distance}
-                        </div>
-                      </div>
-                    ))}
+            {/* Théorie mathématique de l'algorithme */}
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  🔬 Théorie de l'Algorithme de Bellman-Ford
+                  <Badge variant="secondary" className={optimizationMode === "min" ? "bg-blue-100 text-blue-800" : "bg-purple-100 text-purple-800"}>
+                    {optimizationMode === "min" ? "MODE MIN" : "MODE MAX"}
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  Fondements mathématiques et étapes de l'algorithme
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Principe général */}
+                <div className="p-4 bg-slate-50 rounded-lg border">
+                  <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                    📋 Principe Général
+                  </h4>
+                  <p className="text-sm text-gray-700">
+                    {optimizationMode === "min"
+                      ? "L'algorithme de Bellman-Ford trouve le plus court chemin d'un nœud source vers tous les autres nœuds dans un graphe orienté pondéré, même en présence d'arêtes de poids négatif."
+                      : "Version modifiée pour trouver le plus long chemin d'un nœud source vers tous les autres nœuds, utile pour les problèmes de maximisation (profits, capacités)."
+                    }
+                  </p>
+                </div>
+
+                {/* Formule mathématique */}
+                <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                    🧮 Formule de Relaxation
+                  </h4>
+                  <div className="font-mono text-sm bg-white p-3 rounded border">
+                    {optimizationMode === "min" ? (
+                      <>
+                        <div><strong>Si</strong> d[u] + w(u,v) &lt; d[v] <strong>alors</strong></div>
+                        <div className="ml-4 text-blue-600">d[v] = d[u] + w(u,v)</div>
+                        <div className="ml-4 text-blue-600">parent[v] = u</div>
+                      </>
+                    ) : (
+                      <>
+                        <div><strong>Si</strong> d[u] + w(u,v) &gt; d[v] <strong>alors</strong></div>
+                        <div className="ml-4 text-purple-600">d[v] = d[u] + w(u,v)</div>
+                        <div className="ml-4 text-purple-600">parent[v] = u</div>
+                      </>
+                    )}
                   </div>
-                </CardContent>
-              </Card>
-            )}
+                  <p className="text-xs text-gray-600 mt-2">
+                    <strong>d[v]</strong>: distance du nœud source au nœud v<br/>
+                    <strong>w(u,v)</strong>: poids de l'arête de u vers v<br/>
+                    <strong>parent[v]</strong>: nœud précédent dans le chemin optimal
+                  </p>
+                </div>
 
-            {/* Résultats de l'algorithme */}
-            {algorithmCompleted && (
-              <Card className="mt-4">
-                <CardHeader>
-                  <CardTitle>Résultats</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {hasNegativeCycle ? (
-                    <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                      <div className="flex items-center gap-2 text-red-800 font-semibold mb-2">
-                        <span className="text-xl">⚠️</span>
-                        Cycle négatif détecté
+                {/* Étapes de l'algorithme */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-sm flex items-center gap-2">
+                    ⚙️ Étapes de l'Algorithme
+                  </h4>
+
+                  <div className="space-y-2">
+                    <div className="p-3 bg-green-50 rounded border border-green-200">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="bg-green-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold">1</span>
+                        <strong className="text-sm">Initialisation</strong>
                       </div>
-                      <p className="text-red-700">
-                        Le graphe contient un cycle de poids négatif. Il n'existe pas de plus court chemin défini.
-                      </p>
+                      <div className="text-xs text-gray-700 ml-7">
+                        {optimizationMode === "min"
+                          ? "d[source] = 0, d[autres] = +∞"
+                          : "d[source] = 0, d[autres] = -∞"
+                        }
+                      </div>
                     </div>
-                  ) : (
-                    <div>
-                      {allOptimalPaths.length > 0 && optimalDistance !== null ? (
-                        <div className="space-y-4">
-                          <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                            <div className="flex items-center gap-2 text-green-800 font-semibold mb-3">
-                              <span className="text-xl">✅</span>
-                              {allOptimalPaths.length === 1 ? "Chemin optimal trouvé" : `${allOptimalPaths.length} chemins optimaux trouvés`}
-                            </div>
-                            <div className="space-y-3">
-                              <div>
-                                <span className="font-medium">Distance totale : </span>
-                                <span className="font-mono bg-white px-2 py-1 rounded border text-green-700 font-bold">
-                                  {optimalDistance}
-                                </span>
-                              </div>
 
-                              <div>
-                                <span className="font-medium">
-                                  {allOptimalPaths.length === 1 ? "Chemin :" : "Tous les chemins optimaux :"}
-                                </span>
-                                <div className="mt-2 space-y-2">
-                                  {allOptimalPaths.map((path, index) => (
-                                    <div key={index} className="flex items-center gap-2">
-                                      <span className="text-sm text-gray-500 min-w-[20px]">{index + 1}.</span>
-                                      <span className="font-mono bg-white px-2 py-1 rounded border text-sm">
-                                        {path.join(" → ")}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-
-                              <div className="text-sm text-green-700 mt-2">
-                                {allOptimalPaths.length === 1
-                                  ? "Le chemin optimal est mis en évidence en vert sur le graphe."
-                                  : "Tous les chemins optimaux sont mis en évidence en vert sur le graphe."
-                                }
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                          <div className="flex items-center gap-2 text-yellow-800 font-semibold mb-2">
-                            <span className="text-xl">❌</span>
-                            Aucun chemin trouvé
-                          </div>
-                          <p className="text-yellow-700">
-                            Il n'existe pas de chemin du nœud <strong>{startNode}</strong> vers le nœud{" "}
-                            <strong>{endNode}</strong>.
-                          </p>
-                        </div>
-                      )}
+                    <div className="p-3 bg-orange-50 rounded border border-orange-200">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold">2</span>
+                        <strong className="text-sm">Relaxation (V-1 fois)</strong>
+                      </div>
+                      <div className="text-xs text-gray-700 ml-7">
+                        Pour chaque arête (u,v), appliquer la formule de relaxation
+                      </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
+
+                    <div className="p-3 bg-red-50 rounded border border-red-200">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold">3</span>
+                        <strong className="text-sm">Détection de Cycles</strong>
+                      </div>
+                      <div className="text-xs text-gray-700 ml-7">
+                        {optimizationMode === "min"
+                          ? "Vérifier l'existence de cycles négatifs"
+                          : "Vérifier l'existence de cycles positifs"
+                        }
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Complexité */}
+                <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                  <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                    ⏱️ Complexité Temporelle
+                  </h4>
+                  <div className="font-mono text-sm">
+                    <strong>O(V × E)</strong>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">
+                    <strong>V</strong>: nombre de nœuds, <strong>E</strong>: nombre d'arêtes
+                  </p>
+                </div>
+
+                {/* Cas d'usage */}
+                <div className="p-4 bg-indigo-50 rounded-lg border border-indigo-200">
+                  <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                    🎯 Applications Pratiques
+                  </h4>
+                  <ul className="text-xs text-gray-700 space-y-1">
+                    {optimizationMode === "min" ? (
+                      <>
+                        <li>• Navigation GPS (plus court chemin)</li>
+                        <li>• Réseaux de communication (routage optimal)</li>
+                        <li>• Gestion des coûts et budgets</li>
+                        <li>• Détection d'arbitrage financier</li>
+                      </>
+                    ) : (
+                      <>
+                        <li>• Maximisation des profits</li>
+                        <li>• Planification de projets (chemin critique)</li>
+                        <li>• Optimisation de ressources</li>
+                        <li>• Problèmes de flot maximal</li>
+                      </>
+                    )}
+                  </ul>
+                </div>
+
+                {/* Avantages */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 bg-emerald-50 rounded border border-emerald-200">
+                    <h5 className="font-semibold text-xs mb-1 text-emerald-800">✅ Avantages</h5>
+                    <ul className="text-xs text-gray-700 space-y-1">
+                      <li>• Gère les poids négatifs</li>
+                      <li>• Détecte les cycles</li>
+                      <li>• Simple à implémenter</li>
+                    </ul>
+                  </div>
+                  <div className="p-3 bg-rose-50 rounded border border-rose-200">
+                    <h5 className="font-semibold text-xs mb-1 text-rose-800">⚠️ Limitations</h5>
+                    <ul className="text-xs text-gray-700 space-y-1">
+                      <li>• Plus lent que Dijkstra</li>
+                      <li>• Complexité O(V×E)</li>
+                      <li>• Problématique si cycles</li>
+                    </ul>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>

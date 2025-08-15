@@ -25,6 +25,7 @@ interface Node {
   y: number
   distance: number
   previous: string | null
+  predecessors: string[] // New: track all possible predecessors
   isStart: boolean
   isEnd: boolean
 }
@@ -61,6 +62,7 @@ export default function BellmanFordVisualizer() {
   const [startNode, setStartNode] = useState<string | null>(null)
   const [endNode, setEndNode] = useState<string | null>(null)
   const [optimalPath, setOptimalPath] = useState<string[]>([])
+  const [allOptimalPaths, setAllOptimalPaths] = useState<string[][]>([]) // New: track all shortest paths
   const [optimalDistance, setOptimalDistance] = useState<number | null>(null)
   const [hasNegativeCycle, setHasNegativeCycle] = useState(false)
   const [algorithmCompleted, setAlgorithmCompleted] = useState(false)
@@ -135,6 +137,14 @@ export default function BellmanFordVisualizer() {
     // Effacer le canvas
     ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
 
+    // Get all nodes that are part of optimal paths
+    const nodesInOptimalPaths = new Set<string>()
+    if (algorithmCompleted && allOptimalPaths.length > 0) {
+      allOptimalPaths.forEach(path => {
+        path.forEach(nodeId => nodesInOptimalPaths.add(nodeId))
+      })
+    }
+
     // Dessiner les arêtes
     edges.forEach((edge) => {
       const fromNode = nodes.find((n) => n.id === edge.from)
@@ -145,19 +155,22 @@ export default function BellmanFordVisualizer() {
         ctx.moveTo(fromNode.x, fromNode.y)
         ctx.lineTo(toNode.x, toNode.y)
 
-        // Mettre en évidence le chemin optimal
-        const isOptimalPath =
-          algorithmCompleted &&
-          optimalPath.length > 1 &&
-          optimalPath.some(
-            (nodeId, index) =>
-              index < optimalPath.length - 1 && optimalPath[index] === edge.from && optimalPath[index + 1] === edge.to,
+        // Check if this edge is part of ANY optimal path
+        const isInOptimalPath = algorithmCompleted &&
+          allOptimalPaths.some(path =>
+            path.some((nodeId, index) =>
+              index < path.length - 1 &&
+              path[index] === edge.from &&
+              path[index + 1] === edge.to
+            )
           )
 
         // Styles selon l'état
-        if (isOptimalPath) {
-          ctx.strokeStyle = "#10b981"
-          ctx.lineWidth = 4
+        if (isInOptimalPath) {
+          ctx.strokeStyle = "#10b981" // Vert émeraude pour les arêtes optimales
+          ctx.lineWidth = 5
+          ctx.shadowColor = "#10b981"
+          ctx.shadowBlur = 8
         } else if (edge.isActive) {
           ctx.strokeStyle = "#ef4444"
           ctx.lineWidth = 3
@@ -170,6 +183,7 @@ export default function BellmanFordVisualizer() {
         }
 
         ctx.stroke()
+        ctx.shadowBlur = 0 // Reset shadow
 
         // Flèche
         const angle = Math.atan2(toNode.y - fromNode.y, toNode.x - fromNode.x)
@@ -195,9 +209,10 @@ export default function BellmanFordVisualizer() {
         const midY = (fromNode.y + toNode.y) / 2
 
         // Fond du poids
-        if (isOptimalPath) {
-          ctx.fillStyle = "#dcfce7"
-          ctx.strokeStyle = "#10b981"
+        if (isInOptimalPath) {
+          ctx.fillStyle = "#dcfce7" // Fond vert clair
+          ctx.strokeStyle = "#10b981" // Bordure verte
+          ctx.lineWidth = 3
         } else if (edge.isHovered || selectedEdge === edge.id) {
           ctx.fillStyle = "#fef3c7"
           ctx.strokeStyle = "#f59e0b"
@@ -206,12 +221,12 @@ export default function BellmanFordVisualizer() {
           ctx.strokeStyle = "#374151"
         }
 
-        ctx.fillRect(midX - 18, midY - 12, 36, 24)
-        ctx.strokeRect(midX - 18, midY - 12, 36, 24)
+        ctx.fillRect(midX - 20, midY - 14, 40, 28)
+        ctx.strokeRect(midX - 20, midY - 14, 40, 28)
 
         // Texte du poids
-        ctx.fillStyle = "#374151"
-        ctx.font = "bold 12px Arial"
+        ctx.fillStyle = isInOptimalPath ? "#065f46" : "#374151" // Texte vert foncé si optimal
+        ctx.font = isInOptimalPath ? "bold 14px Arial" : "bold 12px Arial"
         ctx.textAlign = "center"
         ctx.fillText(edge.weight.toString(), midX, midY + 4)
       }
@@ -219,6 +234,8 @@ export default function BellmanFordVisualizer() {
 
     // Dessiner les nœuds
     nodes.forEach((node) => {
+      const isInOptimalPath = nodesInOptimalPaths.has(node.id)
+
       ctx.beginPath()
       ctx.arc(node.x, node.y, NODE_RADIUS, 0, 2 * Math.PI)
 
@@ -238,6 +255,12 @@ export default function BellmanFordVisualizer() {
         gradient.addColorStop(0, "#60a5fa")
         gradient.addColorStop(1, "#3b82f6")
         ctx.fillStyle = gradient
+      } else if (isInOptimalPath) {
+        // Nœuds dans les chemins optimaux - couleur dorée/orange
+        const gradient = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, NODE_RADIUS)
+        gradient.addColorStop(0, "#fbbf24") // Jaune/or clair
+        gradient.addColorStop(1, "#d97706") // Orange foncé
+        ctx.fillStyle = gradient
       } else {
         const gradient = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, NODE_RADIUS)
         gradient.addColorStop(0, "#f3f4f6")
@@ -246,21 +269,32 @@ export default function BellmanFordVisualizer() {
       }
 
       ctx.fill()
-      ctx.strokeStyle = "#374151"
-      ctx.lineWidth = 2
+
+      // Bordure spéciale pour les nœuds optimaux
+      if (isInOptimalPath && !node.isStart && !node.isEnd) {
+        ctx.strokeStyle = "#92400e" // Bordure orange foncé
+        ctx.lineWidth = 3
+        ctx.shadowColor = "#d97706"
+        ctx.shadowBlur = 6
+      } else {
+        ctx.strokeStyle = "#374151"
+        ctx.lineWidth = 2
+        ctx.shadowBlur = 0
+      }
       ctx.stroke()
+      ctx.shadowBlur = 0 // Reset shadow
 
       // ID du nœud
-      ctx.fillStyle = "#374151"
-      ctx.font = "bold 16px Arial"
+      ctx.fillStyle = isInOptimalPath && !node.isStart && !node.isEnd ? "#92400e" : "#374151"
+      ctx.font = isInOptimalPath ? "bold 18px Arial" : "bold 16px Arial"
       ctx.textAlign = "center"
       ctx.fillText(node.id, node.x, node.y - 2)
 
       // Distance
       if (node.distance !== Number.POSITIVE_INFINITY) {
-        ctx.font = "12px Arial"
-        ctx.fillStyle = "#6b7280"
-        ctx.fillText(node.distance === Number.POSITIVE_INFINITY ? "∞" : node.distance.toString(), node.x, node.y + 12)
+        ctx.font = isInOptimalPath ? "bold 14px Arial" : "12px Arial"
+        ctx.fillStyle = isInOptimalPath ? "#92400e" : "#6b7280"
+        ctx.fillText(node.distance === Number.POSITIVE_INFINITY ? "∞" : node.distance.toString(), node.x, node.y + 14)
       }
 
       // Icônes pour début et fin
@@ -271,6 +305,12 @@ export default function BellmanFordVisualizer() {
       if (node.isEnd) {
         ctx.font = "16px Arial"
         ctx.fillText("🎯", node.x + NODE_RADIUS - 5, node.y - NODE_RADIUS + 10)
+      }
+
+      // Indicateur spécial pour les nœuds optimaux (étoile)
+      if (isInOptimalPath && !node.isStart && !node.isEnd) {
+        ctx.font = "12px Arial"
+        ctx.fillText("⭐", node.x + NODE_RADIUS - 8, node.y - NODE_RADIUS + 12)
       }
     })
 
@@ -288,7 +328,7 @@ export default function BellmanFordVisualizer() {
         ctx.setLineDash([])
       }
     }
-  }, [nodes, edges, selectedNode, selectedEdge, optimalPath, algorithmCompleted, connectingFrom, mode, mousePos])
+  }, [nodes, edges, selectedNode, selectedEdge, allOptimalPaths, algorithmCompleted, connectingFrom, mode, mousePos])
 
   // Gestion du mouvement de la souris
   const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -342,6 +382,7 @@ export default function BellmanFordVisualizer() {
         y,
         distance: Number.POSITIVE_INFINITY,
         previous: null,
+        predecessors: [], // Initialize as empty array
         isStart: false,
         isEnd: false,
       }
@@ -396,23 +437,50 @@ export default function BellmanFordVisualizer() {
     setNewWeight("")
   }
 
-  // Algorithme de Bellman-Ford (même code qu'avant)
+  // Function to find all shortest paths using DFS
+  const findAllShortestPaths = (
+    nodePredecessors: { [key: string]: string[] },
+    startNodeId: string,
+    endNodeId: string
+  ): string[][] => {
+    const allPaths: string[][] = []
+
+    const dfs = (currentPath: string[], currentNode: string) => {
+      if (currentNode === startNodeId) {
+        allPaths.push([...currentPath].reverse())
+        return
+      }
+
+      const predecessors = nodePredecessors[currentNode] || []
+      for (const predecessor of predecessors) {
+        currentPath.push(predecessor)
+        dfs(currentPath, predecessor)
+        currentPath.pop()
+      }
+    }
+
+    dfs([endNodeId], endNodeId)
+    return allPaths
+  }
+
+  // Enhanced Bellman-Ford algorithm with multiple path tracking
   const runBellmanFord = () => {
     if (!startNode || !endNode) return
 
     setAlgorithmCompleted(false)
     setOptimalPath([])
+    setAllOptimalPaths([])
     setOptimalDistance(null)
     setHasNegativeCycle(false)
 
     const steps: AlgorithmStep[] = []
     const nodeDistances: { [key: string]: number } = {}
-    const nodePrevious: { [key: string]: string | null } = {}
+    const nodePredecessors: { [key: string]: string[] } = {}
 
     // Initialisation
     nodes.forEach((node) => {
       nodeDistances[node.id] = node.id === startNode ? 0 : Number.POSITIVE_INFINITY
-      nodePrevious[node.id] = null
+      nodePredecessors[node.id] = []
     })
 
     // Relaxation des arêtes (V-1 fois)
@@ -424,18 +492,32 @@ export default function BellmanFordVisualizer() {
         const toDistance = nodeDistances[edge.to]
         const newDistance = fromDistance + edge.weight
 
-        if (fromDistance !== Number.POSITIVE_INFINITY && newDistance < toDistance) {
-          nodeDistances[edge.to] = newDistance
-          nodePrevious[edge.to] = edge.from
-          updated = true
+        if (fromDistance !== Number.POSITIVE_INFINITY) {
+          if (newDistance < toDistance) {
+            // Found a better path - replace all predecessors
+            nodeDistances[edge.to] = newDistance
+            nodePredecessors[edge.to] = [edge.from]
+            updated = true
 
-          steps.push({
-            iteration: i + 1,
-            updatedNode: edge.to,
-            distance: newDistance,
-            previous: edge.from,
-            description: `Relaxation: ${edge.from} → ${edge.to} (distance: ${newDistance})`,
-          })
+            steps.push({
+              iteration: i + 1,
+              updatedNode: edge.to,
+              distance: newDistance,
+              previous: edge.from,
+              description: `Relaxation: ${edge.from} → ${edge.to} (distance: ${newDistance})`,
+            })
+          } else if (newDistance === toDistance && !nodePredecessors[edge.to].includes(edge.from)) {
+            // Found an equal path - add to predecessors
+            nodePredecessors[edge.to].push(edge.from)
+
+            steps.push({
+              iteration: i + 1,
+              updatedNode: edge.to,
+              distance: newDistance,
+              previous: edge.from,
+              description: `Chemin alternatif: ${edge.from} → ${edge.to} (distance: ${newDistance})`,
+            })
+          }
         }
       })
 
@@ -465,23 +547,27 @@ export default function BellmanFordVisualizer() {
     setAlgorithmSteps(steps)
     setCurrentStep(0)
 
-    // Calculer le chemin optimal vers le nœud de fin
-    if (!negativeCycle) {
-      const path: string[] = []
-      let current: string | null = endNode
+    // Find all shortest paths
+    if (!negativeCycle && nodeDistances[endNode] !== Number.POSITIVE_INFINITY) {
+      const allPaths = findAllShortestPaths(nodePredecessors, startNode, endNode)
 
-      while (current !== null) {
-        path.unshift(current)
-        current = nodePrevious[current]
-      }
+      setAllOptimalPaths(allPaths)
+      setOptimalPath(allPaths[0] || []) // Set first path as primary for visualization
+      setOptimalDistance(nodeDistances[endNode])
 
-      if (path[0] === startNode) {
-        setOptimalPath(path)
-        setOptimalDistance(nodeDistances[endNode])
-      } else {
-        setOptimalPath([])
-        setOptimalDistance(null)
-      }
+      // Update nodes with all predecessors
+      setNodes((prevNodes) =>
+        prevNodes.map((node) => ({
+          ...node,
+          distance: nodeDistances[node.id],
+          predecessors: nodePredecessors[node.id] || [],
+          previous: nodePredecessors[node.id]?.[0] || null,
+        }))
+      )
+    } else {
+      setOptimalPath([])
+      setAllOptimalPaths([])
+      setOptimalDistance(null)
     }
   }
 
@@ -577,6 +663,7 @@ export default function BellmanFordVisualizer() {
     setCurrentStep(0)
     setAlgorithmSteps([])
     setOptimalPath([])
+    setAllOptimalPaths([]) // Clear all optimal paths
     setOptimalDistance(null)
     setHasNegativeCycle(false)
     setAlgorithmCompleted(false)
@@ -873,27 +960,43 @@ export default function BellmanFordVisualizer() {
                     </div>
                   ) : (
                     <div>
-                      {optimalPath.length > 0 && optimalDistance !== null ? (
-                        <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                          <div className="flex items-center gap-2 text-green-800 font-semibold mb-3">
-                            <span className="text-xl">✅</span>
-                            Chemin optimal trouvé
-                          </div>
-                          <div className="space-y-2">
-                            <div>
-                              <span className="font-medium">Chemin : </span>
-                              <span className="font-mono bg-white px-2 py-1 rounded border">
-                                {optimalPath.join(" → ")}
-                              </span>
+                      {allOptimalPaths.length > 0 && optimalDistance !== null ? (
+                        <div className="space-y-4">
+                          <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                            <div className="flex items-center gap-2 text-green-800 font-semibold mb-3">
+                              <span className="text-xl">✅</span>
+                              {allOptimalPaths.length === 1 ? "Chemin optimal trouvé" : `${allOptimalPaths.length} chemins optimaux trouvés`}
                             </div>
-                            <div>
-                              <span className="font-medium">Distance totale : </span>
-                              <span className="font-mono bg-white px-2 py-1 rounded border text-green-700 font-bold">
-                                {optimalDistance}
-                              </span>
-                            </div>
-                            <div className="text-sm text-green-700 mt-2">
-                              Le chemin optimal est mis en évidence en vert sur le graphe.
+                            <div className="space-y-3">
+                              <div>
+                                <span className="font-medium">Distance totale : </span>
+                                <span className="font-mono bg-white px-2 py-1 rounded border text-green-700 font-bold">
+                                  {optimalDistance}
+                                </span>
+                              </div>
+
+                              <div>
+                                <span className="font-medium">
+                                  {allOptimalPaths.length === 1 ? "Chemin :" : "Tous les chemins optimaux :"}
+                                </span>
+                                <div className="mt-2 space-y-2">
+                                  {allOptimalPaths.map((path, index) => (
+                                    <div key={index} className="flex items-center gap-2">
+                                      <span className="text-sm text-gray-500 min-w-[20px]">{index + 1}.</span>
+                                      <span className="font-mono bg-white px-2 py-1 rounded border text-sm">
+                                        {path.join(" → ")}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="text-sm text-green-700 mt-2">
+                                {allOptimalPaths.length === 1
+                                  ? "Le chemin optimal est mis en évidence en vert sur le graphe."
+                                  : "Tous les chemins optimaux sont mis en évidence en vert sur le graphe."
+                                }
+                              </div>
                             </div>
                           </div>
                         </div>

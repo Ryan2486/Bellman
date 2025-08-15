@@ -59,6 +59,7 @@ export default function BellmanFordVisualizer() {
   const [currentStep, setCurrentStep] = useState(0)
   const [algorithmSteps, setAlgorithmSteps] = useState<AlgorithmStep[]>([])
   const [mode, setMode] = useState<"add" | "connect" | "select" | "delete-edge" | "edit-edge">("add")
+  const [optimizationMode, setOptimizationMode] = useState<"min" | "max">("min") // New: min/max mode
   const [startNode, setStartNode] = useState<string | null>(null)
   const [endNode, setEndNode] = useState<string | null>(null)
   const [optimalPath, setOptimalPath] = useState<string[]>([])
@@ -463,7 +464,7 @@ export default function BellmanFordVisualizer() {
     return allPaths
   }
 
-  // Enhanced Bellman-Ford algorithm with multiple path tracking
+  // Enhanced Bellman-Ford algorithm with MIN/MAX mode support
   const runBellmanFord = () => {
     if (!startNode || !endNode) return
 
@@ -477,9 +478,14 @@ export default function BellmanFordVisualizer() {
     const nodeDistances: { [key: string]: number } = {}
     const nodePredecessors: { [key: string]: string[] } = {}
 
-    // Initialisation
+    // Initialisation selon le mode (MIN/MAX)
     nodes.forEach((node) => {
-      nodeDistances[node.id] = node.id === startNode ? 0 : Number.POSITIVE_INFINITY
+      if (optimizationMode === "min") {
+        nodeDistances[node.id] = node.id === startNode ? 0 : Number.POSITIVE_INFINITY
+      } else {
+        // Mode MAX: on commence avec -∞ et le nœud de départ à 0
+        nodeDistances[node.id] = node.id === startNode ? 0 : Number.NEGATIVE_INFINITY
+      }
       nodePredecessors[node.id] = []
     })
 
@@ -492,68 +498,102 @@ export default function BellmanFordVisualizer() {
         const toDistance = nodeDistances[edge.to]
         const newDistance = fromDistance + edge.weight
 
-        if (fromDistance !== Number.POSITIVE_INFINITY) {
-          if (newDistance < toDistance) {
-            // Found a better path - replace all predecessors
-            nodeDistances[edge.to] = newDistance
-            nodePredecessors[edge.to] = [edge.from]
-            updated = true
+        // Condition selon le mode d'optimisation
+        const shouldUpdate = optimizationMode === "min"
+          ? (fromDistance !== Number.POSITIVE_INFINITY && newDistance < toDistance)
+          : (fromDistance !== Number.NEGATIVE_INFINITY && newDistance > toDistance)
 
-            steps.push({
-              iteration: i + 1,
-              updatedNode: edge.to,
-              distance: newDistance,
-              previous: edge.from,
-              description: `Relaxation: ${edge.from} → ${edge.to} (distance: ${newDistance})`,
-            })
-          } else if (newDistance === toDistance && !nodePredecessors[edge.to].includes(edge.from)) {
-            // Found an equal path - add to predecessors
-            nodePredecessors[edge.to].push(edge.from)
+        const isEqual = optimizationMode === "min"
+          ? (fromDistance !== Number.POSITIVE_INFINITY && newDistance === toDistance)
+          : (fromDistance !== Number.NEGATIVE_INFINITY && newDistance === toDistance)
 
-            steps.push({
-              iteration: i + 1,
-              updatedNode: edge.to,
-              distance: newDistance,
-              previous: edge.from,
-              description: `Chemin alternatif: ${edge.from} → ${edge.to} (distance: ${newDistance})`,
-            })
-          }
+        if (shouldUpdate) {
+          // Found a better path - replace all predecessors
+          nodeDistances[edge.to] = newDistance
+          nodePredecessors[edge.to] = [edge.from]
+          updated = true
+
+          const actionType = optimizationMode === "min" ? "Relaxation" : "Amélioration"
+          steps.push({
+            iteration: i + 1,
+            updatedNode: edge.to,
+            distance: newDistance,
+            previous: edge.from,
+            description: `${actionType}: ${edge.from} → ${edge.to} (distance: ${newDistance})`,
+          })
+        } else if (isEqual && !nodePredecessors[edge.to].includes(edge.from)) {
+          // Found an equal path - add to predecessors
+          nodePredecessors[edge.to].push(edge.from)
+
+          steps.push({
+            iteration: i + 1,
+            updatedNode: edge.to,
+            distance: newDistance,
+            previous: edge.from,
+            description: `Chemin alternatif: ${edge.from} → ${edge.to} (distance: ${newDistance})`,
+          })
         }
       })
 
       if (!updated) break
     }
 
-    // Vérification des cycles négatifs
-    let negativeCycle = false
-    edges.forEach((edge) => {
-      const fromDistance = nodeDistances[edge.from]
-      const toDistance = nodeDistances[edge.to]
-      const newDistance = fromDistance + edge.weight
+    // Vérification des cycles selon le mode
+    let hasCycle = false
+    if (optimizationMode === "min") {
+      // Détection de cycles négatifs (mode MIN)
+      edges.forEach((edge) => {
+        const fromDistance = nodeDistances[edge.from]
+        const toDistance = nodeDistances[edge.to]
+        const newDistance = fromDistance + edge.weight
 
-      if (fromDistance !== Number.POSITIVE_INFINITY && newDistance < toDistance) {
-        negativeCycle = true
-        steps.push({
-          iteration: nodes.length,
-          updatedNode: edge.to,
-          distance: Number.NEGATIVE_INFINITY,
-          previous: null,
-          description: `Cycle négatif détecté!`,
-        })
-      }
-    })
+        if (fromDistance !== Number.POSITIVE_INFINITY && newDistance < toDistance) {
+          hasCycle = true
+          steps.push({
+            iteration: nodes.length,
+            updatedNode: edge.to,
+            distance: Number.NEGATIVE_INFINITY,
+            previous: null,
+            description: `Cycle négatif détecté!`,
+          })
+        }
+      })
+    } else {
+      // Détection de cycles positifs (mode MAX)
+      edges.forEach((edge) => {
+        const fromDistance = nodeDistances[edge.from]
+        const toDistance = nodeDistances[edge.to]
+        const newDistance = fromDistance + edge.weight
 
-    setHasNegativeCycle(negativeCycle)
+        if (fromDistance !== Number.NEGATIVE_INFINITY && newDistance > toDistance) {
+          hasCycle = true
+          steps.push({
+            iteration: nodes.length,
+            updatedNode: edge.to,
+            distance: Number.POSITIVE_INFINITY,
+            previous: null,
+            description: `Cycle positif détecté!`,
+          })
+        }
+      })
+    }
+
+    setHasNegativeCycle(hasCycle)
     setAlgorithmSteps(steps)
     setCurrentStep(0)
 
-    // Find all shortest paths
-    if (!negativeCycle && nodeDistances[endNode] !== Number.POSITIVE_INFINITY) {
+    // Find all optimal paths
+    const endNodeDistance = nodeDistances[endNode]
+    const isValidDistance = optimizationMode === "min"
+      ? endNodeDistance !== Number.POSITIVE_INFINITY
+      : endNodeDistance !== Number.NEGATIVE_INFINITY
+
+    if (!hasCycle && isValidDistance) {
       const allPaths = findAllShortestPaths(nodePredecessors, startNode, endNode)
 
       setAllOptimalPaths(allPaths)
-      setOptimalPath(allPaths[0] || []) // Set first path as primary for visualization
-      setOptimalDistance(nodeDistances[endNode])
+      setOptimalPath(allPaths[0] || [])
+      setOptimalDistance(endNodeDistance)
 
       // Update nodes with all predecessors
       setNodes((prevNodes) =>
@@ -808,6 +848,35 @@ export default function BellmanFordVisualizer() {
                     </div>
                   </div>
                 )}
+
+                <Separator />
+
+                {/* Mode d'optimisation MIN/MAX */}
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Principe d'optimisation:</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      variant={optimizationMode === "min" ? "default" : "outline"}
+                      onClick={() => setOptimizationMode("min")}
+                      className="justify-start text-xs"
+                    >
+                      📉 MINIMISATION
+                    </Button>
+                    <Button
+                      variant={optimizationMode === "max" ? "default" : "outline"}
+                      onClick={() => setOptimizationMode("max")}
+                      className="justify-start text-xs"
+                    >
+                      📈 MAXIMISATION
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {optimizationMode === "min"
+                      ? "Recherche du chemin le plus court"
+                      : "Recherche du chemin le plus long"
+                    }
+                  </p>
+                </div>
 
                 <Separator />
 
